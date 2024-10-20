@@ -1,0 +1,61 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+
+# Generate noisy data
+np.random.seed(0)
+N = 100
+X = np.linspace(-12, 12, N)
+Y = 2 * X + 1 + np.random.randn(N)
+
+# RANSAC for line fitting
+max_inliers = 0
+best_line = None
+
+for _ in range(1000):
+    sample_indices = np.random.choice(N, 2, replace=False)
+    x_sample, y_sample = X[sample_indices], Y[sample_indices]
+    coeffs = np.polyfit(x_sample, y_sample, 1)
+    
+    distances = np.abs(Y - (coeffs[0] * X + coeffs[1]))
+    inliers = np.sum(distances < 1.0)
+
+    if inliers > max_inliers:
+        max_inliers = inliers
+        best_line = coeffs
+
+
+def circle_loss(params, x, y):
+    xc, yc, r = params
+    return np.sum((np.sqrt((x - xc)**2 + (y - yc)**2) - r)**2)
+
+# Filter out line inliers
+remnant = np.abs(Y - (best_line[0] * X + best_line[1])) >= 1.0
+X_remnant, Y_remnant = X[remnant], Y[remnant]
+
+# RANSAC for circle fitting
+max_inliers = 0
+best_circle = None
+
+for _ in range(1000):
+    sample_indices = np.random.choice(len(X_remnant), 3, replace=False)
+    x_sample, y_sample = X_remnant[sample_indices], Y_remnant[sample_indices]
+    
+    # Fit circle using optimization
+    initial_guess = (np.mean(x_sample), np.mean(y_sample), 1.0)
+    result = minimize(circle_loss, initial_guess, args=(x_sample, y_sample))
+    xc, yc, r = result.x
+
+    distances = np.abs(np.sqrt((X_remnant - xc)**2 + (Y_remnant - yc)**2) - r)
+    inliers = np.sum(distances < 1.0)
+
+    if inliers > max_inliers:
+        max_inliers = inliers
+        best_circle = (xc, yc, r)
+
+# Plot the result
+plt.scatter(X, Y, label='Data Points')
+circle = plt.Circle((best_circle[0], best_circle[1]), best_circle[2], fill=False, color='b', label='RANSAC Circle Fit')
+plt.gca().add_patch(circle)
+plt.legend()
+plt.show()
