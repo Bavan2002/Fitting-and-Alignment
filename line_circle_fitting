@@ -1,0 +1,110 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+
+# Generate a noisy dataset with points conforming to a line and a circle
+np.random.seed(0)
+N = 100
+half_n = N // 2
+
+# Generate circle points (ground truth circle)
+r = 10
+x0_gt, y0_gt = 2, 3  # Circle center
+theta = np.random.uniform(0, 2 * np.pi, half_n)
+noise = np.random.randn(half_n) * (r / 16)
+x_circ = x0_gt + (r + noise) * np.cos(theta)
+y_circ = y0_gt + (r + noise) * np.sin(theta)
+
+# Generate line points (ground truth line)
+m, b = 1, 2  # Line slope and intercept
+x_line = np.linspace(-12, 12, half_n)
+y_line = m * x_line + b + np.random.randn(half_n)
+
+# Combine both sets of points
+X = np.vstack((np.hstack((x_circ, x_line)), np.hstack((y_circ, y_line)))).T
+
+# RANSAC for line fitting
+def ransac_line(X, num_iterations=1000, threshold=1.0):
+    max_inliers = 0
+    best_line = None
+
+    for _ in range(num_iterations):
+        sample_indices = np.random.choice(X.shape[0], 2, replace=False)
+        p1, p2 = X[sample_indices]
+        
+        a, b = p2[1] - p1[1], p1[0] - p2[0]
+        d = -(a * p1[0] + b * p1[1])
+        norm = np.sqrt(a**2 + b**2)
+        a, b, d = a / norm, b / norm, d / norm
+
+        distances = np.abs(a * X[:, 0] + b * X[:, 1] + d)
+        inliers = distances < threshold
+
+        if np.sum(inliers) > max_inliers:
+            max_inliers = np.sum(inliers)
+            best_line = (a, b, d)
+            inlier_points = X[inliers]
+
+    return best_line, inlier_points
+
+best_line, line_inliers = ransac_line(X)
+
+# RANSAC for circle fitting
+def circle_loss(params, x, y):
+    xc, yc, r = params
+    return np.sum((np.sqrt((x - xc)**2 + (y - yc)**2) - r)**2)
+
+def ransac_circle(X, num_iterations=1000, threshold=1.0):
+    max_inliers = 0
+    best_circle = None
+
+    for _ in range(num_iterations):
+        sample_indices = np.random.choice(X.shape[0], 3, replace=False)
+        x_sample, y_sample = X[sample_indices, 0], X[sample_indices, 1]
+
+        initial_guess = (np.mean(x_sample), np.mean(y_sample), 1.0)
+        result = minimize(circle_loss, initial_guess, args=(x_sample, y_sample))
+        xc, yc, r = result.x
+
+        distances = np.abs(np.sqrt((X[:, 0] - xc)**2 + (X[:, 1] - yc)**2) - r)
+        inliers = distances < threshold
+
+        if np.sum(inliers) > max_inliers:
+            max_inliers = np.sum(inliers)
+            best_circle = (xc, yc, r)
+            circle_inliers = X[inliers]
+
+    return best_circle, circle_inliers
+
+remnant = np.array([point for point in X if point.tolist() not in line_inliers.tolist()])
+best_circle, circle_inliers = ransac_circle(remnant)
+
+# Plot the points with reduced size
+plt.scatter(X[:, 0], X[:, 1], s=10, color='blue', label='All points')
+plt.scatter(line_inliers[:, 0], line_inliers[:, 1], s=20, color='yellow', label='Line inliers')
+plt.scatter(circle_inliers[:, 0], circle_inliers[:, 1], s=20, color='red', label='Circle inliers')
+
+# Ground truth circle and line
+ground_truth_circle = plt.Circle((x0_gt, y0_gt), r, fill=False, color='green', linestyle='--', label='Ground truth circle')
+plt.gca().add_patch(ground_truth_circle)
+
+x_vals = np.linspace(-14, 14, 100)
+y_vals = m * x_vals + b
+plt.plot(x_vals, y_vals, 'b--', label='Ground truth line')
+
+# RANSAC circle and line
+ransac_circle = plt.Circle((best_circle[0], best_circle[1]), best_circle[2], fill=False, color='magenta', label='RANSAC circle')
+plt.gca().add_patch(ransac_circle)
+
+y_ransac = -(best_line[0] * x_vals + best_line[2]) / best_line[1]
+plt.plot(x_vals, y_ransac, 'm', label='RANSAC line')
+
+# Sample points used for the best fits
+plt.scatter(X[:2, 0], X[:2, 1], color='red', marker='x', s=30, label='Best sample for line')
+plt.scatter(X[2:5, 0], X[2:5, 1], color='green', marker='o', s=30, label='Best sample for circle')
+
+# Legend and final plot adjustments
+plt.gca().set_aspect('equal', adjustable='box')
+plt.legend(loc='upper right')
+plt.title('Circle and Line Fitting with RANSAC')
+plt.show()
